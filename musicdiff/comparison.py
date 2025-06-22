@@ -406,88 +406,87 @@ class Comparison:
     @staticmethod
     @_memoize_block_diff_lin
     def _block_diff_lin(original, compare_to):
-        if len(original) == 0 and len(compare_to) == 0:
-            return [], 0
 
-        if len(original) == 0:
-            op_list, cost = Comparison._block_diff_lin(original, compare_to[1:])
-            cost += compare_to[0].notation_size()
-            op_list.append(("insbar", None, compare_to[0], compare_to[0].notation_size()))
-            return op_list, cost
-
-        if len(compare_to) == 0:
-            op_list, cost = Comparison._block_diff_lin(original[1:], compare_to)
-            cost += original[0].notation_size()
-            op_list.append(("delbar", original[0], None, original[0].notation_size()))
-            return op_list, cost
-
-        # compute the cost and the op_list for the many possibilities of recursion
-        cost_dict = {}
-        op_list_dict = {}
-        # del-bar
-        op_list_dict["delbar"], cost_dict["delbar"] = Comparison._block_diff_lin(
-            original[1:], compare_to
-        )
-        cost_dict["delbar"] += original[0].notation_size()
-        op_list_dict["delbar"].append(
-            ("delbar", original[0], None, original[0].notation_size())
-        )
-        # ins-bar
-        op_list_dict["insbar"], cost_dict["insbar"] = Comparison._block_diff_lin(
-            original, compare_to[1:]
-        )
-        cost_dict["insbar"] += compare_to[0].notation_size()
-        op_list_dict["insbar"].append(
-            ("insbar", None, compare_to[0], compare_to[0].notation_size())
-        )
-        # edit-bar
-        op_list_dict["editbar"], cost_dict["editbar"] = Comparison._block_diff_lin(
-            original[1:], compare_to[1:]
-        )
-        if (
-            original[0] == compare_to[0]
-        ):  # to avoid performing the _voices_coupling_recursive/_notes_set_distance
-            # if it's not needed
-            inside_bar_op_list = []
-            inside_bar_cost = 0
-        else:
-            # diff the bar extras (like _notes_set_distance, but with lists of AnnExtras
-            # instead of lists of AnnNotes)
-            extras_op_list, extras_cost = Comparison._extras_set_distance(
-                original[0].extras_list, compare_to[0].extras_list
-            )
-
-            # diff the bar lyrics (with lists of AnnLyrics instead of lists of AnnExtras)
-            lyrics_op_list, lyrics_cost = Comparison._lyrics_diff_lin(
-                original[0].lyrics_list, compare_to[0].lyrics_list
-            )
-
-            if original[0].includes_voicing:
-                # run the voice coupling algorithm, and add to inside_bar_op_list
-                # and inside_bar_cost
-                inside_bar_op_list, inside_bar_cost = (
-                    Comparison._voices_coupling_recursive(
-                        original[0].voices_list, compare_to[0].voices_list
+        # Compute measure to measure differences
+        pairwise_bar_op_list_and_cost = []
+        for measure_in_original in original:
+            pairwise_bar_op_list_and_cost.append([])
+            for measure_in_compare_to in compare_to:
+                if (
+                    measure_in_original == measure_in_compare_to
+                ):  # to avoid performing the _voices_coupling_recursive/_notes_set_distance
+                    # if it's not needed
+                    inside_bar_op_list = []
+                    inside_bar_cost = 0
+                else:
+                    # diff the bar extras (like _notes_set_distance, but with lists of AnnExtras
+                    # instead of lists of AnnNotes)
+                    extras_op_list, extras_cost = Comparison._extras_set_distance(
+                        measure_in_original.extras_list, measure_in_compare_to.extras_list
                     )
-                )
-            else:
-                # run the set distance algorithm, and add to inside_bar_op_list
-                # and inside_bar_cost
-                inside_bar_op_list, inside_bar_cost = Comparison._notes_set_distance(
-                    original[0].annot_notes, compare_to[0].annot_notes
-                )
 
-            inside_bar_op_list.extend(extras_op_list)
-            inside_bar_cost += extras_cost
-            inside_bar_op_list.extend(lyrics_op_list)
-            inside_bar_cost += lyrics_cost
+                    # diff the bar lyrics (with lists of AnnLyrics instead of lists of AnnExtras)
+                    lyrics_op_list, lyrics_cost = Comparison._lyrics_diff_lin(
+                        measure_in_original.lyrics_list, measure_in_compare_to.lyrics_list
+                    )
 
-        cost_dict["editbar"] += inside_bar_cost
-        op_list_dict["editbar"].extend(inside_bar_op_list)
-        # compute the minimum of the possibilities
-        min_key = min(cost_dict, key=lambda k: cost_dict[k])
-        out = op_list_dict[min_key], cost_dict[min_key]
-        return out
+                    if measure_in_original.includes_voicing:
+                        # run the voice coupling algorithm, and add to inside_bar_op_list
+                        # and inside_bar_cost
+                        inside_bar_op_list, inside_bar_cost = (
+                            Comparison._voices_coupling_recursive(
+                                measure_in_original.voices_list, measure_in_compare_to.voices_list
+                            )
+                        )
+                    else:
+                        # run the set distance algorithm, and add to inside_bar_op_list
+                        # and inside_bar_cost
+                        inside_bar_op_list, inside_bar_cost = Comparison._notes_set_distance(
+                            measure_in_original.annot_notes, measure_in_compare_to.annot_notes
+                        )
+
+                    inside_bar_op_list.extend(extras_op_list)
+                    inside_bar_cost += extras_cost
+                    inside_bar_op_list.extend(lyrics_op_list)
+                    inside_bar_cost += lyrics_cost
+
+                pairwise_bar_op_list_and_cost[-1].append((inside_bar_op_list, inside_bar_cost))
+
+        # NOTE: for conveniece, opt_list_and_cost[i][j] represents list and cost of original[:i] and compare_to[:j]
+        max_possible_cost = sum(
+            [m.notation_size() for m in original] + [m.notation_size() for m in compare_to]
+        )
+        opt_list_and_cost = [[(None, max_possible_cost + 1) for _ in range(len(compare_to)+1)] for _ in range(len(original)+1)]
+        for idx_original in range(len(original), -1, -1):
+            for idx_compare_to in range(len(compare_to), -1, -1):
+                if idx_original == len(original) and idx_compare_to == len(compare_to):
+                    # first measure, no previous measures to compare to
+                    opt_list_and_cost[idx_original][idx_compare_to] = ([], 0)
+                    continue
+
+                if idx_original != len(original):
+                    prev_opt_list, prev_cost = opt_list_and_cost[idx_original+1][idx_compare_to]
+                    new_opt_list = prev_opt_list + [("delbar", original[idx_original], None, original[idx_original].notation_size())]
+                    new_cost = prev_cost + original[idx_original].notation_size()
+                    if new_cost < opt_list_and_cost[idx_original][idx_compare_to][1]:
+                        opt_list_and_cost[idx_original][idx_compare_to] = (new_opt_list, new_cost)
+
+                if idx_compare_to != len(compare_to):
+                    prev_opt_list, prev_cost = opt_list_and_cost[idx_original][idx_compare_to+1]
+                    new_opt_list = prev_opt_list + [("insbar", None, compare_to[idx_compare_to], compare_to[idx_compare_to].notation_size())]
+                    new_cost = prev_cost + compare_to[idx_compare_to].notation_size()
+                    if new_cost < opt_list_and_cost[idx_original][idx_compare_to][1]:
+                        opt_list_and_cost[idx_original][idx_compare_to] = (new_opt_list, new_cost)
+
+                if idx_original != len(original) and idx_compare_to != len(compare_to):
+                    prev_opt_list, prev_cost = opt_list_and_cost[idx_original+1][idx_compare_to+1]
+                    inside_bar_op_list, inside_bar_cost = pairwise_bar_op_list_and_cost[idx_original][idx_compare_to]
+                    new_opt_list = prev_opt_list + inside_bar_op_list
+                    new_cost = prev_cost + inside_bar_cost
+                    if new_cost < opt_list_and_cost[idx_original][idx_compare_to][1]:
+                        opt_list_and_cost[idx_original][idx_compare_to] = (new_opt_list, new_cost)
+
+        return opt_list_and_cost[0][0]
 
     @staticmethod
     @_memoize_lyrics_diff_lin
