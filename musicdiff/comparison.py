@@ -452,41 +452,41 @@ class Comparison:
 
                 pairwise_bar_op_list_and_cost[-1].append((inside_bar_op_list, inside_bar_cost))
 
-        # NOTE: for conveniece, opt_list_and_cost[i][j] represents list and cost of original[:i] and compare_to[:j]
+        # NOTE: for conveniece, op_list_and_cost[i][j] represents list and cost of original[:i] and compare_to[:j]
         max_possible_cost = sum(
             [m.notation_size() for m in original] + [m.notation_size() for m in compare_to]
         )
-        opt_list_and_cost = [[(None, max_possible_cost + 1) for _ in range(len(compare_to)+1)] for _ in range(len(original)+1)]
+        op_list_and_cost = [[(None, max_possible_cost + 1) for _ in range(len(compare_to)+1)] for _ in range(len(original)+1)]
         for idx_original in range(len(original), -1, -1):
             for idx_compare_to in range(len(compare_to), -1, -1):
                 if idx_original == len(original) and idx_compare_to == len(compare_to):
                     # first measure, no previous measures to compare to
-                    opt_list_and_cost[idx_original][idx_compare_to] = ([], 0)
+                    op_list_and_cost[idx_original][idx_compare_to] = ([], 0)
                     continue
 
                 if idx_original != len(original):
-                    prev_opt_list, prev_cost = opt_list_and_cost[idx_original+1][idx_compare_to]
-                    new_opt_list = prev_opt_list + [("delbar", original[idx_original], None, original[idx_original].notation_size())]
+                    prev_op_list, prev_cost = op_list_and_cost[idx_original+1][idx_compare_to]
+                    new_op_list = prev_op_list + [("delbar", original[idx_original], None, original[idx_original].notation_size())]
                     new_cost = prev_cost + original[idx_original].notation_size()
-                    if new_cost < opt_list_and_cost[idx_original][idx_compare_to][1]:
-                        opt_list_and_cost[idx_original][idx_compare_to] = (new_opt_list, new_cost)
+                    if new_cost < op_list_and_cost[idx_original][idx_compare_to][1]:
+                        op_list_and_cost[idx_original][idx_compare_to] = (new_op_list, new_cost)
 
                 if idx_compare_to != len(compare_to):
-                    prev_opt_list, prev_cost = opt_list_and_cost[idx_original][idx_compare_to+1]
-                    new_opt_list = prev_opt_list + [("insbar", None, compare_to[idx_compare_to], compare_to[idx_compare_to].notation_size())]
+                    prev_op_list, prev_cost = op_list_and_cost[idx_original][idx_compare_to+1]
+                    new_op_list = prev_op_list + [("insbar", None, compare_to[idx_compare_to], compare_to[idx_compare_to].notation_size())]
                     new_cost = prev_cost + compare_to[idx_compare_to].notation_size()
-                    if new_cost < opt_list_and_cost[idx_original][idx_compare_to][1]:
-                        opt_list_and_cost[idx_original][idx_compare_to] = (new_opt_list, new_cost)
+                    if new_cost < op_list_and_cost[idx_original][idx_compare_to][1]:
+                        op_list_and_cost[idx_original][idx_compare_to] = (new_op_list, new_cost)
 
                 if idx_original != len(original) and idx_compare_to != len(compare_to):
-                    prev_opt_list, prev_cost = opt_list_and_cost[idx_original+1][idx_compare_to+1]
+                    prev_op_list, prev_cost = op_list_and_cost[idx_original+1][idx_compare_to+1]
                     inside_bar_op_list, inside_bar_cost = pairwise_bar_op_list_and_cost[idx_original][idx_compare_to]
-                    new_opt_list = prev_opt_list + inside_bar_op_list
+                    new_op_list = prev_op_list + inside_bar_op_list
                     new_cost = prev_cost + inside_bar_cost
-                    if new_cost < opt_list_and_cost[idx_original][idx_compare_to][1]:
-                        opt_list_and_cost[idx_original][idx_compare_to] = (new_opt_list, new_cost)
+                    if new_cost < op_list_and_cost[idx_original][idx_compare_to][1]:
+                        op_list_and_cost[idx_original][idx_compare_to] = (new_op_list, new_cost)
 
-        return opt_list_and_cost[0][0]
+        return op_list_and_cost[0][0]
 
     @staticmethod
     @_memoize_lyrics_diff_lin
@@ -1089,58 +1089,43 @@ class Comparison:
             note2 {AnnNote} -- the note for referencing in the score
             which -- a string: e.g. "articulation" depending what we are comparing
         """
-        if len(original) == 0 and len(compare_to) == 0:
-            return [], 0
+        max_possible_cost = max(len(original), len(compare_to)) + 1
+        op_list_and_cost = [[(None, max_possible_cost) for _ in range(len(compare_to)+1)] for _ in range(len(original)+1)]
 
-        if len(original) == 0:
-            op_list, cost = Comparison._generic_levenshtein_diff(
-                original, compare_to[1:], note1, note2, which
-            )
-            op_list.append(("ins" + which, note1, note2, 1))
-            cost += 1
-            return op_list, cost
+        for idx_original in range(len(original), -1, -1):
+            for idx_compare_to in range(len(compare_to), -1, -1):
+                if idx_original == len(original) and idx_compare_to == len(compare_to):
+                    # first measure, no previous measures to compare to
+                    op_list_and_cost[idx_original][idx_compare_to] = ([], 0)
+                    continue
 
-        if len(compare_to) == 0:
-            op_list, cost = Comparison._generic_levenshtein_diff(
-                original[1:], compare_to, note1, note2, which
-            )
-            op_list.append(("del" + which, note1, note2, 1))
-            cost += 1
-            return op_list, cost
+                if idx_original != len(original):
+                    prev_op_list, prev_cost = op_list_and_cost[idx_original+1][idx_compare_to]
+                    new_op_list = prev_op_list + [("del" + which, note1, note2, 1)]
+                    new_cost = prev_cost + 1
+                    if new_cost < op_list_and_cost[idx_original][idx_compare_to][1]:
+                        op_list_and_cost[idx_original][idx_compare_to] = (new_op_list, new_cost)
 
-        # compute the cost and the op_list for the many possibilities of recursion
-        cost = {}
-        op_list = {}
-        # delwhich
-        op_list["del" + which], cost["del" + which] = Comparison._generic_levenshtein_diff(
-            original[1:], compare_to, note1, note2, which
-        )
-        cost["del" + which] += 1
-        op_list["del" + which].append(("del" + which, note1, note2, 1))
-        # inswhich
-        op_list["ins" + which], cost["ins" + which] = Comparison._generic_levenshtein_diff(
-            original, compare_to[1:], note1, note2, which
-        )
-        cost["ins" + which] += 1
-        op_list["ins" + which].append(("ins" + which, note1, note2, 1))
-        # editwhich
-        op_list["edit" + which], cost["edit" + which] = Comparison._generic_levenshtein_diff(
-            original[1:], compare_to[1:], note1, note2, which
-        )
-        if original[0] == compare_to[0]:  # to avoid perform the diff
-            generic_diff_op_list = []
-            generic_diff_cost = 0
-        else:
-            generic_diff_op_list, generic_diff_cost = (
-                [("edit" + which, note1, note2, 1)],
-                1,
-            )
-        cost["edit" + which] += generic_diff_cost
-        op_list["edit" + which].extend(generic_diff_op_list)
-        # compute the minimum of the possibilities
-        min_key = min(cost, key=cost.get)
-        out = op_list[min_key], cost[min_key]
-        return out
+                if idx_compare_to != len(compare_to):
+                    prev_op_list, prev_cost = op_list_and_cost[idx_original][idx_compare_to+1]
+                    new_op_list = prev_op_list + [("ins" + which, note1, note2, 1)]
+                    new_cost = prev_cost + 1
+                    if new_cost < op_list_and_cost[idx_original][idx_compare_to][1]:
+                        op_list_and_cost[idx_original][idx_compare_to] = (new_op_list, new_cost)
+
+                if idx_original != len(original) and idx_compare_to != len(compare_to):
+                    prev_op_list, prev_cost = op_list_and_cost[idx_original+1][idx_compare_to+1]
+                    if original[idx_original] == compare_to[idx_compare_to]:
+                        new_op_list = prev_op_list
+                        new_cost = prev_cost
+                    else:
+                        new_op_list = prev_op_list + [("edit" + which, note1, note2, 1)]
+                        new_cost = prev_cost + 1
+
+                    if new_cost < op_list_and_cost[idx_original][idx_compare_to][1]:
+                        op_list_and_cost[idx_original][idx_compare_to] = (new_op_list, new_cost)
+
+        return op_list_and_cost[0][0]
 
     @staticmethod
     @_memoize_notes_set_distance
