@@ -45,25 +45,6 @@ class EvaluationMetrics:
         self.edit_distances_dict: dict[str, int] = edit_distances_dict
         self.omr_ned: float = omr_ned
 
-# memoizers to speed up the recursive computation
-def _memoize_notes_set_distance(func):
-    def memoizer(original, compare_to):
-        key = repr(original) + repr(compare_to)
-        if key not in Comparison._memoizer_mem:
-            Comparison._memoizer_mem[key] = func(original, compare_to)
-        return copy.deepcopy(Comparison._memoizer_mem[key])
-
-    return memoizer
-
-def _memoize_extras_set_distance(func):
-    def memoizer(original, compare_to):
-        key = repr(original) + repr(compare_to)
-        if key not in Comparison._memoizer_mem:
-            Comparison._memoizer_mem[key] = func(original, compare_to)
-        return copy.deepcopy(Comparison._memoizer_mem[key])
-
-    return memoizer
-
 def _memoize_staff_groups_set_distance(func):
     def memoizer(original, compare_to):
         key = repr(original) + repr(compare_to)
@@ -87,61 +68,6 @@ def _memoize_inside_bars_diff_lin(func):
         key = repr(original) + repr(compare_to)
         if key not in Comparison._memoizer_mem:
             Comparison._memoizer_mem[key] = func(original, compare_to)
-        return copy.deepcopy(Comparison._memoizer_mem[key])
-
-    return memoizer
-
-def _memoize_lyrics_diff_lin(func):
-    def memoizer(original, compare_to):
-        key = repr(original) + repr(compare_to)
-        if key not in Comparison._memoizer_mem:
-            Comparison._memoizer_mem[key] = func(original, compare_to)
-        return copy.deepcopy(Comparison._memoizer_mem[key])
-
-    return memoizer
-
-def _memoize_block_diff_lin(func):
-    def memoizer(original, compare_to):
-        key = repr(original) + repr(compare_to)
-        if key not in Comparison._memoizer_mem:
-            Comparison._memoizer_mem[key] = func(original, compare_to)
-        return copy.deepcopy(Comparison._memoizer_mem[key])
-
-    return memoizer
-
-def _memoize_pitches_lev_diff(func):
-    def memoizer(original, compare_to, noteNode1, noteNode2, ids):
-        key = (
-            repr(original)
-            + repr(compare_to)
-            + repr(noteNode1)
-            + repr(noteNode2)
-            + repr(ids)
-        )
-        if key not in Comparison._memoizer_mem:
-            Comparison._memoizer_mem[key] = func(original, compare_to, noteNode1, noteNode2, ids)
-        return copy.deepcopy(Comparison._memoizer_mem[key])
-
-    return memoizer
-
-def _memoize_beamtuplet_lev_diff(func):
-    def memoizer(original, compare_to, noteNode1, noteNode2, which):
-        key = (
-            repr(original) + repr(compare_to) + repr(noteNode1) + repr(noteNode2) + which
-        )
-        if key not in Comparison._memoizer_mem:
-            Comparison._memoizer_mem[key] = func(original, compare_to, noteNode1, noteNode2, which)
-        return copy.deepcopy(Comparison._memoizer_mem[key])
-
-    return memoizer
-
-def _memoize_generic_lev_diff(func):
-    def memoizer(original, compare_to, noteNode1, noteNode2, which):
-        key = (
-            repr(original) + repr(compare_to) + repr(noteNode1) + repr(noteNode2) + which
-        )
-        if key not in Comparison._memoizer_mem:
-            Comparison._memoizer_mem[key] = func(original, compare_to, noteNode1, noteNode2, which)
         return copy.deepcopy(Comparison._memoizer_mem[key])
 
     return memoizer
@@ -274,7 +200,6 @@ class Comparison:
         return new_out
 
     @staticmethod
-    @_memoize_pitches_lev_diff
     def _pitches_levenshtein_diff(
         original: list[tuple[str, str, bool]],
         compare_to: list[tuple[str, str, bool]],
@@ -291,65 +216,48 @@ class Comparison:
             noteNode2 {annotatedNote} --for referencing
             ids {tuple} -- a tuple of 2 elements with the indices of the notes considered
         """
-        if len(original) == 0 and len(compare_to) == 0:
-            return [], 0
+        max_possible_cost = (
+            sum(M21Utils.pitch_size(p) for p in original)
+            + sum(M21Utils.pitch_size(p) for p in compare_to)
+        )
+        op_list_and_cost = [[(None, max_possible_cost + 1) for _ in range(len(compare_to)+1)] for _ in range(len(original)+1)]
 
-        if len(original) == 0:
-            op_list, cost = Comparison._pitches_levenshtein_diff(
-                original, compare_to[1:], noteNode1, noteNode2, (ids[0], ids[1] + 1)
-            )
-            op_list.append(
-                ("inspitch", noteNode1, noteNode2, M21Utils.pitch_size(compare_to[0]), ids)
-            )
-            cost += M21Utils.pitch_size(compare_to[0])
-            return op_list, cost
+        for idx_original in range(len(original), -1, -1):
+            for idx_compare_to in range(len(compare_to), -1, -1):
+                if idx_original == len(original) and idx_compare_to == len(compare_to):
+                    # first pitch, no previous pitches to compare to
+                    op_list_and_cost[idx_original][idx_compare_to] = ([], 0)
+                    continue
 
-        if len(compare_to) == 0:
-            op_list, cost = Comparison._pitches_levenshtein_diff(
-                original[1:], compare_to, noteNode1, noteNode2, (ids[0] + 1, ids[1])
-            )
-            op_list.append(
-                ("delpitch", noteNode1, noteNode2, M21Utils.pitch_size(original[0]), ids)
-            )
-            cost += M21Utils.pitch_size(original[0])
-            return op_list, cost
+                if idx_original != len(original):
+                    prev_op_list, prev_cost = op_list_and_cost[idx_original+1][idx_compare_to]
+                    new_op_list = prev_op_list + [("delpitch", noteNode1, noteNode2, M21Utils.pitch_size(original[idx_original]), ids)]
+                    new_cost = prev_cost + M21Utils.pitch_size(original[idx_original])
+                    if new_cost < op_list_and_cost[idx_original][idx_compare_to][1]:
+                        op_list_and_cost[idx_original][idx_compare_to] = (new_op_list, new_cost)
 
-        # compute the cost and the op_list for the many possibilities of recursion
-        cost_dict = {}
-        op_list_dict = {}
-        # del-pitch
-        op_list_dict["delpitch"], cost_dict["delpitch"] = Comparison._pitches_levenshtein_diff(
-            original[1:], compare_to, noteNode1, noteNode2, (ids[0] + 1, ids[1])
-        )
-        cost_dict["delpitch"] += M21Utils.pitch_size(original[0])
-        op_list_dict["delpitch"].append(
-            ("delpitch", noteNode1, noteNode2, M21Utils.pitch_size(original[0]), ids)
-        )
-        # ins-pitch
-        op_list_dict["inspitch"], cost_dict["inspitch"] = Comparison._pitches_levenshtein_diff(
-            original, compare_to[1:], noteNode1, noteNode2, (ids[0], ids[1] + 1)
-        )
-        cost_dict["inspitch"] += M21Utils.pitch_size(compare_to[0])
-        op_list_dict["inspitch"].append(
-            ("inspitch", noteNode1, noteNode2, M21Utils.pitch_size(compare_to[0]), ids)
-        )
-        # edit-pitch
-        op_list_dict["editpitch"], cost_dict["editpitch"] = Comparison._pitches_levenshtein_diff(
-            original[1:], compare_to[1:], noteNode1, noteNode2, (ids[0] + 1, ids[1] + 1)
-        )
-        if original[0] == compare_to[0]:  # to avoid perform the pitch_diff
-            pitch_diff_op_list = []
-            pitch_diff_cost = 0
-        else:
-            pitch_diff_op_list, pitch_diff_cost = Comparison._pitches_diff(
-                original[0], compare_to[0], noteNode1, noteNode2, (ids[0], ids[1])
-            )
-        cost_dict["editpitch"] += pitch_diff_cost
-        op_list_dict["editpitch"].extend(pitch_diff_op_list)
-        # compute the minimum of the possibilities
-        min_key = min(cost_dict, key=lambda k: cost_dict[k])
-        out = op_list_dict[min_key], cost_dict[min_key]
-        return out
+                if idx_compare_to != len(compare_to):
+                    prev_op_list, prev_cost = op_list_and_cost[idx_original][idx_compare_to+1]
+                    new_op_list = prev_op_list + [("inspitch", noteNode1, noteNode2, M21Utils.pitch_size(compare_to[idx_compare_to]), ids)]
+                    new_cost = prev_cost + M21Utils.pitch_size(compare_to[idx_compare_to])
+                    if new_cost < op_list_and_cost[idx_original][idx_compare_to][1]:
+                        op_list_and_cost[idx_original][idx_compare_to] = (new_op_list, new_cost)
+
+                if idx_original != len(original) and idx_compare_to != len(compare_to):
+                    prev_op_list, prev_cost = op_list_and_cost[idx_original+1][idx_compare_to+1]
+                    if original[idx_original] == compare_to[idx_compare_to]:
+                        new_op_list, new_cost = prev_op_list, prev_cost
+                    else:
+                        pitch_diff_op_list, pitch_diff_cost = Comparison._pitches_diff(
+                            original[idx_original], compare_to[idx_compare_to], noteNode1, noteNode2, ids
+                        )
+                        new_op_list = prev_op_list + pitch_diff_op_list
+                        new_cost = prev_cost + pitch_diff_cost
+                    if new_cost < op_list_and_cost[idx_original][idx_compare_to][1]:
+                        op_list_and_cost[idx_original][idx_compare_to] = (new_op_list, new_cost)
+        
+        # return the op_list and cost for the first pitch
+        return op_list_and_cost[0][0]
 
     @staticmethod
     def _pitches_diff(pitch1, pitch2, noteNode1, noteNode2, ids):
@@ -404,7 +312,6 @@ class Comparison:
         return op_list, cost
 
     @staticmethod
-    @_memoize_block_diff_lin
     def _block_diff_lin(original, compare_to):
 
         # Compute measure to measure differences
@@ -452,7 +359,6 @@ class Comparison:
 
                 pairwise_bar_op_list_and_cost[-1].append((inside_bar_op_list, inside_bar_cost))
 
-        # NOTE: for conveniece, op_list_and_cost[i][j] represents list and cost of original[:i] and compare_to[:j]
         max_possible_cost = sum(
             [m.notation_size() for m in original] + [m.notation_size() for m in compare_to]
         )
@@ -489,63 +395,51 @@ class Comparison:
         return op_list_and_cost[0][0]
 
     @staticmethod
-    @_memoize_lyrics_diff_lin
     def _lyrics_diff_lin(original, compare_to):
         # original and compare to are two lists of AnnLyric
-        if len(original) == 0 and len(compare_to) == 0:
-            return [], 0
+        max_possible_cost = (
+            sum(lyric.notation_size() for lyric in original)
+            + sum(lyric.notation_size() for lyric in compare_to)
+        )
+        op_list_and_cost = [[(None, max_possible_cost + 1) for _ in range(len(compare_to)+1)] for _ in range(len(original)+1)]
+        for idx_original in range(len(original), -1, -1):
+            for idx_compare_to in range(len(compare_to), -1, -1):
+                if idx_original == len(original) and idx_compare_to == len(compare_to):
+                    # first lyric, no previous lyrics to compare to
+                    op_list_and_cost[idx_original][idx_compare_to] = ([], 0)
+                    continue
 
-        if len(original) == 0:
-            cost = 0
-            op_list, cost = Comparison._lyrics_diff_lin(original, compare_to[1:])
-            op_list.append(("lyricins", None, compare_to[0], compare_to[0].notation_size()))
-            cost += compare_to[0].notation_size()
-            return op_list, cost
+                if idx_original != len(original):
+                    prev_op_list, prev_cost = op_list_and_cost[idx_original+1][idx_compare_to]
+                    new_op_list = prev_op_list + [("lyricdel", original[idx_original], None, original[idx_original].notation_size())]
+                    new_cost = prev_cost + original[idx_original].notation_size()
+                    if new_cost < op_list_and_cost[idx_original][idx_compare_to][1]:
+                        op_list_and_cost[idx_original][idx_compare_to] = (new_op_list, new_cost)
 
-        if len(compare_to) == 0:
-            cost = 0
-            op_list, cost = Comparison._lyrics_diff_lin(original[1:], compare_to)
-            op_list.append(("lyricdel", original[0], None, original[0].notation_size()))
-            cost += original[0].notation_size()
-            return op_list, cost
+                if idx_compare_to != len(compare_to):
+                    prev_op_list, prev_cost = op_list_and_cost[idx_original][idx_compare_to+1]
+                    new_op_list = prev_op_list + [("lyricins", None, compare_to[idx_compare_to], compare_to[idx_compare_to].notation_size())]
+                    new_cost = prev_cost + compare_to[idx_compare_to].notation_size()
+                    if new_cost < op_list_and_cost[idx_original][idx_compare_to][1]:
+                        op_list_and_cost[idx_original][idx_compare_to] = (new_op_list, new_cost)
 
-        # compute the cost and the op_list for the many possibilities of recursion
-        cost = {}
-        op_list = {}
-        # lyricdel
-        op_list["lyricdel"], cost["lyricdel"] = Comparison._lyrics_diff_lin(
-            original[1:], compare_to
-        )
-        cost["lyricdel"] += original[0].notation_size()
-        op_list["lyricdel"].append(
-            ("lyricdel", original[0], None, original[0].notation_size())
-        )
-        # lyricins
-        op_list["lyricins"], cost["lyricins"] = Comparison._lyrics_diff_lin(
-            original, compare_to[1:]
-        )
-        cost["lyricins"] += compare_to[0].notation_size()
-        op_list["lyricins"].append(
-            ("lyricins", None, compare_to[0], compare_to[0].notation_size())
-        )
-        # lyricsub
-        op_list["lyricsub"], cost["lyricsub"] = Comparison._lyrics_diff_lin(
-            original[1:], compare_to[1:]
-        )
-        if (
-            original[0] == compare_to[0]
-        ):  # avoid call another function if they are equal
-            lyricsub_op, lyricsub_cost = [], 0
-        else:
-            lyricsub_op, lyricsub_cost = (
-                Comparison._annotated_lyric_diff(original[0], compare_to[0])
-            )
-        cost["lyricsub"] += lyricsub_cost
-        op_list["lyricsub"].extend(lyricsub_op)
-        # compute the minimum of the possibilities
-        min_key = min(cost, key=cost.get)
-        out = op_list[min_key], cost[min_key]
-        return out
+                if idx_original != len(original) and idx_compare_to != len(compare_to):
+                    prev_op_list, prev_cost = op_list_and_cost[idx_original+1][idx_compare_to+1]
+                    if original[idx_original] == compare_to[idx_compare_to]:
+                        # avoid call another function if they are equal
+                        lyricsub_op_list = []
+                        lyricsub_cost = 0
+                    else:
+                        lyricsub_op_list, lyricsub_cost = Comparison._annotated_lyric_diff(
+                            original[idx_original], compare_to[idx_compare_to]
+                        )
+                    new_op_list = prev_op_list + lyricsub_op_list
+                    new_cost = prev_cost + lyricsub_cost
+                    if new_cost < op_list_and_cost[idx_original][idx_compare_to][1]:
+                        op_list_and_cost[idx_original][idx_compare_to] = (new_op_list, new_cost)
+        
+        # return the op_list and cost for the first lyric
+        return op_list_and_cost[0][0]
 
     @staticmethod
     def _strings_levenshtein_distance(str1: str, str2: str):
@@ -1012,7 +906,6 @@ class Comparison:
         return op_list, cost
 
     @staticmethod
-    @_memoize_beamtuplet_lev_diff
     def _beamtuplet_levenshtein_diff(original, compare_to, note1, note2, which):
         """
         Compute the levenshtein distance between two sequences of beaming or tuples.
@@ -1026,58 +919,44 @@ class Comparison:
         if which not in ("beam", "tuplet"):
             raise ValueError("Argument 'which' must be either 'beam' or 'tuplet'")
 
-        if len(original) == 0 and len(compare_to) == 0:
-            return [], 0
+        max_possible_cost = max(len(original), len(compare_to)) + 1
+        op_list_and_cost = [[(None, max_possible_cost) for _ in range(len(compare_to)+1)] for _ in range(len(original)+1)]
+        for idx_original in range(len(original), -1, -1):
+            for idx_compare_to in range(len(compare_to), -1, -1):
+                if idx_original == len(original) and idx_compare_to == len(compare_to):
+                    # first measure, no previous measures to compare to
+                    op_list_and_cost[idx_original][idx_compare_to] = ([], 0)
+                    continue
 
-        if len(original) == 0:
-            op_list, cost = Comparison._beamtuplet_levenshtein_diff(
-                original, compare_to[1:], note1, note2, which
-            )
-            op_list.append(("ins" + which, note1, note2, 1))
-            cost += 1
-            return op_list, cost
+                if idx_original != len(original):
+                    prev_op_list, prev_cost = op_list_and_cost[idx_original+1][idx_compare_to]
+                    new_op_list = prev_op_list + [("del" + which, note1, note2, 1)]
+                    new_cost = prev_cost + 1
+                    if new_cost < op_list_and_cost[idx_original][idx_compare_to][1]:
+                        op_list_and_cost[idx_original][idx_compare_to] = (new_op_list, new_cost)
 
-        if len(compare_to) == 0:
-            op_list, cost = Comparison._beamtuplet_levenshtein_diff(
-                original[1:], compare_to, note1, note2, which
-            )
-            op_list.append(("del" + which, note1, note2, 1))
-            cost += 1
-            return op_list, cost
+                if idx_compare_to != len(compare_to):
+                    prev_op_list, prev_cost = op_list_and_cost[idx_original][idx_compare_to+1]
+                    new_op_list = prev_op_list + [("ins" + which, note1, note2, 1)]
+                    new_cost = prev_cost + 1
+                    if new_cost < op_list_and_cost[idx_original][idx_compare_to][1]:
+                        op_list_and_cost[idx_original][idx_compare_to] = (new_op_list, new_cost)
 
-        # compute the cost and the op_list for the many possibilities of recursion
-        cost = {}
-        op_list = {}
-        # delwhich
-        op_list["del" + which], cost["del" + which] = Comparison._beamtuplet_levenshtein_diff(
-            original[1:], compare_to, note1, note2, which
-        )
-        cost["del" + which] += 1
-        op_list["del" + which].append(("del" + which, note1, note2, 1))
-        # inswhich
-        op_list["ins" + which], cost["ins" + which] = Comparison._beamtuplet_levenshtein_diff(
-            original, compare_to[1:], note1, note2, which
-        )
-        cost["ins" + which] += 1
-        op_list["ins" + which].append(("ins" + which, note1, note2, 1))
-        # editwhich
-        op_list["edit" + which], cost["edit" + which] = Comparison._beamtuplet_levenshtein_diff(
-            original[1:], compare_to[1:], note1, note2, which
-        )
-        if original[0] == compare_to[0]:
-            beam_diff_op_list = []
-            beam_diff_cost = 0
-        else:
-            beam_diff_op_list, beam_diff_cost = [("edit" + which, note1, note2, 1)], 1
-        cost["edit" + which] += beam_diff_cost
-        op_list["edit" + which].extend(beam_diff_op_list)
-        # compute the minimum of the possibilities
-        min_key = min(cost, key=cost.get)
-        out = op_list[min_key], cost[min_key]
-        return out
+                if idx_original != len(original) and idx_compare_to != len(compare_to):
+                    prev_op_list, prev_cost = op_list_and_cost[idx_original+1][idx_compare_to+1]
+                    if original[idx_original] == compare_to[idx_compare_to]:
+                        new_op_list = prev_op_list
+                        new_cost = prev_cost
+                    else:
+                        new_op_list = prev_op_list + [("edit" + which, note1, note2, 1)]
+                        new_cost = prev_cost + 1
+
+                    if new_cost < op_list_and_cost[idx_original][idx_compare_to][1]:
+                        op_list_and_cost[idx_original][idx_compare_to] = (new_op_list, new_cost)
+        
+        return op_list_and_cost[0][0]
 
     @staticmethod
-    @_memoize_generic_lev_diff
     def _generic_levenshtein_diff(original, compare_to, note1, note2, which):
         """
         Compute the Levenshtein distance between two generic sequences of symbols
@@ -1128,7 +1007,6 @@ class Comparison:
         return op_list_and_cost[0][0]
 
     @staticmethod
-    @_memoize_notes_set_distance
     def _notes_set_distance(original: list[AnnNote], compare_to: list[AnnNote]):
         """
         Gather up pairs of matching notes (using pitch, offset, graceness, and visual duration, in
@@ -1222,7 +1100,6 @@ class Comparison:
         return op_list, cost
 
     @staticmethod
-    @_memoize_extras_set_distance
     def _extras_set_distance(original: list[AnnExtra], compare_to: list[AnnExtra]):
         """
         Gather up pairs of matching extras (using kind, offset, and visual duration, in
