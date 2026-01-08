@@ -19,6 +19,7 @@ import re
 import typing as t
 
 # import sys
+import webcolors  # type: ignore
 import music21 as m21
 from music21.common import OffsetQL, opFrac
 
@@ -81,7 +82,7 @@ class M21Utils:
     @staticmethod
     def expression_to_string(
         expr: m21.expressions.Expression,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str:
         theName: str = ''
         placement: str | None = None
@@ -183,10 +184,14 @@ class M21Utils:
             # TODO: we probably need full string, symbolic, infodict for expressions.
             # For now (because some tremolos are also extras) we call symbolic here,
             # to get the one-symbol representation of the tremolo.
-            return M21Utils.tremolo_to_symbolic(expr, detail=detail)
+            return M21Utils.tremolo_to_symbolic(expr, 'tremolo', detail)
 
         if isinstance(expr, m21.expressions.TextExpression):
-            te: str | None = M21Utils.textexp_to_string(expr, M21Utils.extra_to_kind(expr))
+            te: str | None = M21Utils.textexp_to_string(
+                expr,
+                M21Utils.extra_to_kind(expr),
+                detail
+            )
             return te or ''
 
         # all others just get expr.name
@@ -197,15 +202,15 @@ class M21Utils:
     def tremolo_to_string(
         expr: m21.expressions.Tremolo | m21.expressions.TremoloSpanner,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
     @staticmethod
     def tremolo_to_symbolic(
         expr: m21.expressions.Tremolo | m21.expressions.TremoloSpanner,
-        kind: str = 'tremolo',
-        detail: DetailLevel | int = DetailLevel.Default
+        kind: str,
+        detail: DetailLevel | int
     ) -> str:
         if isinstance(expr, m21.expressions.Tremolo):
             return 'bTrem'
@@ -217,14 +222,14 @@ class M21Utils:
     def tremolo_to_infodict(
         expr: m21.expressions.Tremolo | m21.expressions.TremoloSpanner,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         return {}
 
     @staticmethod
     def articulation_to_string(
         artic: m21.articulations.Articulation,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str:
         theName: str = artic.name
 
@@ -243,7 +248,7 @@ class M21Utils:
     @staticmethod
     def note2tuple(
         note: m21.note.Note | m21.note.Unpitched | m21.note.Rest,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> tuple[str, str, bool]:
         note_pitch: str
         note_accidental: str
@@ -557,7 +562,7 @@ class M21Utils:
     @staticmethod
     def get_tuplets_info(
         note_list: list[m21.note.GeneralNote],
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> list[list[str]]:
         """
         for each note return a list of tuple(str, str) with the tuplet type string and a string
@@ -567,31 +572,40 @@ class M21Utils:
         for n in note_list:
             tuplet_info_list_for_note: list[str] = []
             for tup in n.duration.tuplets:
+                # notes that don't start a tuplet have no info that anyone looks at
+                new_info: str = ""
                 if tup.type == "start":
                     # music21 only pays attention to number and bracket visibility/placement
                     # on the start note of a tuplet.  TODO: Should I pass in/use result of
                     # get_tuplets_type?  It has more (implied) starts than the actual tuplets do.
-                    if tup.tupletActualShow in ("number", "both"):
-                        if tup.tupletNormalShow in ("number", "both"):
-                            new_info = str(tup.numberNotesActual) + ":" + str(tup.numberNotesNormal)
-                        else:  # just a number for the tuplets
-                            new_info = str(tup.numberNotesActual)
-                    else:
-                        if tup.tupletNormalShow in ("number", "both"):
-                            new_info = ":" + str(tup.numberNotesNormal)
-                        else:  # no number shown
-                            new_info = ""
-                    # if the brackets are drawn explicitly, add B
-                    if tup.bracket:
-                        new_info = new_info + "B"
-                    # if diffing style, include placement (None, "above", "below")
                     if DetailLevel.includesStyle(detail):
+                        # what number(s) are shown?
+                        if tup.tupletActualShow in ("number", "both"):
+                            if tup.tupletNormalShow in ("number", "both"):
+                                new_info = (str(tup.numberNotesActual)
+                                    + ":" + str(tup.numberNotesNormal))
+                            else:  # just a number for the tuplets
+                                new_info = str(tup.numberNotesActual)
+                        else:
+                            if tup.tupletNormalShow in ("number", "both"):
+                                new_info = ":" + str(tup.numberNotesNormal)
+                            else:  # no number shown
+                                new_info = ""
+
+                        # append bracketing and placement to the number(s)
+
+                        # if the brackets are drawn explicitly, add B
+                        if tup.bracket:
+                            new_info = new_info + "B"
+
+                        # placement (None, "above", "below")
                         if tup.placement is not None:
                             new_info = new_info + tup.placement
-                    tuplet_info_list_for_note.append(new_info)
-                else:
-                    # notes that don't start a tuplet have no info that anyone looks at
-                    tuplet_info_list_for_note.append("")
+                    else:
+                        # no annotated style? just a number
+                        new_info = str(tup.numberNotesActual)
+
+                tuplet_info_list_for_note.append(new_info)
             str_list.append(tuplet_info_list_for_note)
         return str_list
 
@@ -739,7 +753,7 @@ class M21Utils:
         measure: m21.stream.Measure,
         part: m21.stream.Part,
         score: m21.stream.Score,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> bool:
         if el.hasStyleInformation and el.style.hideObjectOnPrint:
             # we ignore all invisible objects
@@ -800,7 +814,7 @@ class M21Utils:
         part: m21.stream.Part,
         score: m21.stream.Score,
         spannerBundle: m21.spanner.SpannerBundle,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> list[m21.base.Music21Object]:
         # returns a list of every object contained in the measure (and in the measure's
         # substreams/Voices), skipping any Streams, and GeneralNotes (which are returned
@@ -876,27 +890,19 @@ class M21Utils:
             spanner_types.append(m21.expressions.ArpeggioMarkSpanner)
         if DetailLevel.includesDirections(detail):
             spanner_types.append(m21.dynamics.DynamicWedge)
-            if M21Utilities.m21PedalMarksSupported():
-                spanner_types.append(m21.expressions.PedalMark)  # type: ignore
+            spanner_types.append(m21.expressions.PedalMark)
         if DetailLevel.includesOttavas(detail):
             spanner_types.append(m21.spanner.Ottava)
         if DetailLevel.includesTremolos(detail):
             spanner_types.append(m21.expressions.TremoloSpanner)
 
-        spannerElementClasses: tuple[type, ...]
-        if M21Utilities.m21PedalMarksSupported():
-            spannerElementClasses = (
-                m21.note.GeneralNote,
-                m21.spanner.SpannerAnchor,
-                m21.expressions.PedalBounce,  # type: ignore
-                m21.expressions.PedalGapStart,  # type: ignore
-                m21.expressions.PedalGapEnd,  # type: ignore
-            )
-        else:
-            spannerElementClasses = (
-                m21.note.GeneralNote,
-                m21.spanner.SpannerAnchor
-            )
+        spannerElementClasses: tuple[type, ...] = (
+            m21.note.GeneralNote,
+            m21.spanner.SpannerAnchor,
+            m21.expressions.PedalBounce,
+            m21.expressions.PedalGapStart,
+            m21.expressions.PedalGapEnd,
+        )
 
         for gn in measure.recurse().getElementsByClass(spannerElementClasses):
             spannerList: list[m21.spanner.Spanner] = gn.getSpannerSites(spanner_types)
@@ -1052,9 +1058,6 @@ class M21Utils:
         if isinstance(extra, m21.expressions.RehearsalMark):
             return 'rehearsalmark'
 
-        if not M21Utilities.m21PedalMarksSupported():
-            return ''
-
         # pylint: disable=no-member
         if isinstance(extra, m21.expressions.PedalMark):  # type: ignore
             return 'pedalmark'
@@ -1073,18 +1076,13 @@ class M21Utils:
 
         return ''
 
-    # pylint: disable=no-member
     @staticmethod
     def get_enclosing_pedalmark(
-        # pt: m21.expressions.PedalTransition
-        pt: m21.base.Music21Object
-    ) -> m21.spanner.Spanner | None:  # m21.expressions.PedalMark | None:
-        if not M21Utilities.m21PedalMarksSupported():
-            return None
-
+        po: m21.expressions.PedalObject
+    ) -> m21.expressions.PedalMark | None:
         pm: m21.expressions.PedalMark | None = None  # type: ignore
         ss: list[m21.spanner.Spanner] = (
-            pt.getSpannerSites((m21.expressions.PedalMark,))  # type: ignore
+            po.getSpannerSites((m21.expressions.PedalMark,))  # type: ignore
         )
         if ss:
             if t.TYPE_CHECKING:
@@ -1094,20 +1092,15 @@ class M21Utils:
 
     @staticmethod
     def is_in_pedalmark(
-        # pt: m21.expressions.PedalTransition
-        pt: m21.base.Music21Object
+        po: m21.expressions.PedalObject
     ) -> bool:  # type: ignore
-        if not M21Utilities.m21PedalMarksSupported():
-            return False
-
-        return M21Utils.get_enclosing_pedalmark(pt) is not None
-    # pylint: enable=no-member
+        return M21Utils.get_enclosing_pedalmark(po) is not None
 
     @staticmethod
     def extra_to_symbolic(
         extra: m21.base.Music21Object,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         if kind == 'clef':
             if t.TYPE_CHECKING:
@@ -1180,9 +1173,6 @@ class M21Utils:
             if t.TYPE_CHECKING:
                 assert isinstance(extra, m21.expressions.RehearsalMark)
             return M21Utils.rehearsalmark_to_symbolic(extra, kind, detail)
-        if not M21Utilities.m21PedalMarksSupported():
-            return None
-
         if kind == 'pedalmark':
             if t.TYPE_CHECKING:
                 assert isinstance(extra, m21.expressions.PedalMark)  # type: ignore
@@ -1206,7 +1196,7 @@ class M21Utils:
     def extra_to_infodict(
         extra: m21.base.Music21Object,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         if kind == 'clef':
             if t.TYPE_CHECKING:
@@ -1279,10 +1269,6 @@ class M21Utils:
             if t.TYPE_CHECKING:
                 assert isinstance(extra, m21.expressions.RehearsalMark)
             return M21Utils.rehearsalmark_to_infodict(extra, kind, detail)
-
-        if not M21Utilities.m21PedalMarksSupported():
-            return {}
-
         if kind == 'pedalmark':
             if t.TYPE_CHECKING:
                 assert isinstance(extra, m21.expressions.PedalMark)  # type: ignore
@@ -1308,7 +1294,7 @@ class M21Utils:
         kind: str,
         measure: m21.stream.Measure,
         score: m21.stream.Score,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> tuple[OffsetQL | None, OffsetQL | None]:
         offset: OffsetQL | None = None
         duration: OffsetQL | None = None
@@ -1354,7 +1340,7 @@ class M21Utils:
     def clef_to_string(
         clef: m21.clef.Clef,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
@@ -1362,7 +1348,7 @@ class M21Utils:
     def clef_to_symbolic(
         clef: m21.clef.Clef,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         # sign(str), line(int), octaveChange(int == # octaves to shift up(+) or down(-))
         sign: str = '' if clef.sign is None else clef.sign
@@ -1375,7 +1361,7 @@ class M21Utils:
     def clef_to_infodict(
         clef: m21.clef.Clef,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         return {}
 
@@ -1383,7 +1369,7 @@ class M21Utils:
     def timesig_to_string(
         timesig: m21.meter.TimeSignature,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
@@ -1391,7 +1377,7 @@ class M21Utils:
     def timesig_to_symbolic(
         timesig: m21.meter.TimeSignature,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
@@ -1399,7 +1385,7 @@ class M21Utils:
     def timesig_to_infodict(
         timesig: m21.meter.TimeSignature,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         output: dict[str, str] = {}
 
@@ -1420,7 +1406,7 @@ class M21Utils:
     def tempo_to_string(
         mm: m21.tempo.TempoIndication,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         # pylint: disable=protected-access
         # We need direct access to mm._textExpression and mm._tempoText, to avoid
@@ -1477,7 +1463,7 @@ class M21Utils:
     def tempo_to_symbolic(
         mm: m21.tempo.TempoIndication,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         output: str | None = ''
         if isinstance(mm, m21.tempo.TempoText):
@@ -1526,7 +1512,7 @@ class M21Utils:
     def tempo_to_infodict(
         mm: m21.tempo.TempoIndication,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         return {}
 
@@ -1609,7 +1595,7 @@ class M21Utils:
     def barline_to_string(
         barline: m21.bar.Barline,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
@@ -1617,7 +1603,7 @@ class M21Utils:
     def barline_to_symbolic(
         barline: m21.bar.Barline,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return f'{barline.type}'
 
@@ -1625,7 +1611,7 @@ class M21Utils:
     def barline_to_infodict(
         barline: m21.bar.Barline,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         # each element is one symbol
         output: dict[str, str] = {}
@@ -1649,16 +1635,16 @@ class M21Utils:
     @staticmethod
     def ottava_to_string(
         ottava: m21.spanner.Ottava,
-        kind: str = 'ottava',
-        detail: DetailLevel | int = DetailLevel.Default
+        kind: str,
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
     @staticmethod
     def ottava_to_symbolic(
         ottava: m21.spanner.Ottava,
-        kind: str = 'ottava',
-        detail: DetailLevel | int = DetailLevel.Default
+        kind: str,
+        detail: DetailLevel | int
     ) -> str | None:
         output: str = f'{ottava.type}'
         return output
@@ -1666,24 +1652,24 @@ class M21Utils:
     @staticmethod
     def ottava_to_infodict(
         ottava: m21.spanner.Ottava,
-        kind: str = 'ottava',
-        detail: DetailLevel | int = DetailLevel.Default
+        kind: str,
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         return {}
 
     @staticmethod
     def keysig_to_string(
         keysig: m21.key.Key | m21.key.KeySignature,
-        kind: str = 'keysig',
-        detail: DetailLevel | int = DetailLevel.Default
+        kind: str,
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
     @staticmethod
     def keysig_to_symbolic(
         keysig: m21.key.Key | m21.key.KeySignature,
-        kind: str = 'keysig',
-        detail: DetailLevel | int = DetailLevel.Default
+        kind: str,
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
@@ -1693,8 +1679,8 @@ class M21Utils:
     @staticmethod
     def keysig_to_infodict(
         keysig: m21.key.Key | m21.key.KeySignature,
-        kind: str = 'keysig',
-        detail: DetailLevel | int = DetailLevel.Default
+        kind: str,
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         output: dict[str, str] = {}
         if keysig.sharps == 0:
@@ -1714,8 +1700,8 @@ class M21Utils:
     @staticmethod
     def textexp_to_string(
         textexp: m21.expressions.TextExpression,
-        kind: str = 'direction',
-        detail: DetailLevel | int = DetailLevel.Default
+        kind: str,
+        detail: DetailLevel | int
     ) -> str | None:
         if textexp.content is None:
             return None
@@ -1724,8 +1710,8 @@ class M21Utils:
     @staticmethod
     def textexp_to_symbolic(
         textexp: m21.expressions.TextExpression,
-        kind: str = 'direction',
-        detail: DetailLevel | int = DetailLevel.Default
+        kind: str,
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
@@ -1733,7 +1719,7 @@ class M21Utils:
     def textexp_to_infodict(
         textexp: m21.expressions.TextExpression,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         return {}
 
@@ -1741,7 +1727,7 @@ class M21Utils:
     def dynamic_to_string(
         dynamic: m21.dynamics.Dynamic | m21.dynamics.DynamicWedge,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
@@ -1749,7 +1735,7 @@ class M21Utils:
     def dynamic_to_symbolic(
         dynamic: m21.dynamics.Dynamic | m21.dynamics.DynamicWedge,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         if isinstance(dynamic, m21.dynamics.Dynamic):
             return f'{dynamic.value.strip()}'
@@ -1765,7 +1751,7 @@ class M21Utils:
     def dynamic_to_infodict(
         dynamic: m21.dynamics.Dynamic | m21.dynamics.DynamicWedge,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         return {}
 
@@ -1773,7 +1759,7 @@ class M21Utils:
     def rehearsalmark_to_string(
         expr: m21.expressions.RehearsalMark,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         if expr.content is None:
             return None
@@ -1783,7 +1769,7 @@ class M21Utils:
     def rehearsalmark_to_symbolic(
         expr: m21.expressions.RehearsalMark,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str:
         return ''
 
@@ -1791,73 +1777,38 @@ class M21Utils:
     def rehearsalmark_to_infodict(
         expr: m21.expressions.RehearsalMark,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         return {}
 
-    # pylint: disable=no-member
     @staticmethod
     def pedalmark_to_string(
-        # expr: m21.expressions.PedalMark,
-        expr: m21.spanner.Spanner,
+        expr: m21.expressions.PedalMark,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return ''
 
     @staticmethod
     def pedalmark_to_symbolic(
-        # expr: m21.expressions.PedalMark,
-        expr: m21.spanner.Spanner,
+        expr: m21.expressions.PedalMark,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str:
         return ''
 
     @staticmethod
     def pedalmark_to_infodict(
-        # expr: m21.expressions.PedalMark,
-        expr: m21.spanner.Spanner,
+        expr: m21.expressions.PedalMark,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         output: dict[str, str] = {}
-        if expr.pedalType != m21.expressions.PedalType.Unspecified:  # type: ignore
-            output['pedalType'] = expr.pedalType  # type: ignore
+        if expr.pedalType is not None:
+            output['pedalType'] = expr.pedalType
 
-        if expr.startForm in (  # type: ignore
-                m21.expressions.PedalForm.PedalName,  # type: ignore
-                m21.expressions.PedalForm.Ped):  # type: ignore
-            if expr.startForm == m21.expressions.PedalForm.PedalName:  # type: ignore
-                if expr.pedalType == m21.expressions.PedalType.Sostenuto:  # type: ignore
-                    output['start'] = 'Sost.'
-                else:
-                    output['start'] = 'Ped.'
-            elif expr.startForm == m21.expressions.PedalForm.Ped:  # type: ignore
-                output['start'] = 'Ped.'
-
-            if expr.continueLine in (  # type: ignore
-                    m21.expressions.PedalLine.Line,   # type: ignore
-                    m21.expressions.PedalLine.Dashed):  # type: ignore
-                if expr.continueLine in m21.expressions.PedalLine.Dashed:  # type: ignore
-                    output['line'] = expr.continueLine  # type: ignore
-                output['end'] = 'line'
-            else:
-                output['end'] = '*'
-        elif expr.startForm == m21.expressions.PedalForm.VerticalLine:  # type: ignore
-            output['start'] = 'line'
-            output['end'] = 'line'
-            if expr.continueLine in (  # type: ignore
-                    m21.expressions.PedalLine.Dashed,   # type: ignore
-                    m21.expressions.PedalLine.NoLine):  # type: ignore
-                # only annotate unexpected continueLine
-                output['line'] = expr.continueLine  # type: ignore
-        else:
-            # startForm is unspecified or makes no sense, so ignored.
-            # Either way, we have nothing to annotate about visual form.
-            # output['start'] = 'unspecified'
-            # output['end'] = 'unspecified'
-            pass
+        if expr.pedalForm is not None:
+            output['pedalForm'] = expr.pedalForm
 
         if expr.abbreviated:  # type: ignore
             output['abbreviated'] = 'yes'
@@ -1865,67 +1816,45 @@ class M21Utils:
 
     @staticmethod
     def pedalbounce_to_string(
-        # expr: m21.expressions.PedalBounce,
-        expr: m21.base.Music21Object,
+        expr: m21.expressions.PedalBounce,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return ''
 
     @staticmethod
     def pedalbounce_to_symbolic(
-        # expr: m21.expressions.PedalBounce,
-        expr: m21.base.Music21Object,
+        expr: m21.expressions.PedalBounce,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str:
-        return ''
-
-    @staticmethod
-    def pedalbounce_to_infodict(
-        # expr: m21.expressions.PedalBounce,
-        expr: m21.base.Music21Object,
-        kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
-    ) -> dict[str, str]:
-        output: dict[str, str] = {}
+        output: str = ''
         pm = M21Utils.get_enclosing_pedalmark(expr)
         if pm is not None:
-            bounceUp: m21.expressions.PedalForm = expr.bounceUp  # type: ignore
-            bounceDown: m21.expressions.PedalForm = expr.bounceDown  # type: ignore
-            if m21.expressions.PedalForm.SlantedLine in (bounceUp, bounceDown):  # type: ignore
-                output['bounce'] = 'caret'
-            elif bounceUp == m21.expressions.PedalForm.NoMark:  # type: ignore
-                if (pm.pedalType == m21.expressions.PedalType.Sostenuto  # type: ignore
-                        and pm.pedalForm == m21.expressions.PedalName):  # type: ignore
-                    output['bounceDown'] = 'Sost.'
-                else:
-                    output['bounceDown'] = 'Ped.'
-            else:
-                output['bounceUp'] = '*'
-                if (pm.pedalType == m21.expressions.PedalType.Sostenuto  # type: ignore
-                        and pm.pedalForm == m21.expressions.PedalName):  # type: ignore
-                    output['bounceDown'] = 'Sost.'
-                else:
-                    output['bounceDown'] = 'Ped.'
-
+            output = 'PedalBounce'
         return output
 
     @staticmethod
-    def pedalgapstart_to_string(
-        # expr: m21.expressions.PedalGapStart,
-        expr: m21.base.Music21Object,
+    def pedalbounce_to_infodict(
+        expr: m21.expressions.PedalBounce,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
+    ) -> dict[str, str]:
+        return {}
+
+    @staticmethod
+    def pedalgapstart_to_string(
+        expr: m21.expressions.PedalGapStart,
+        kind: str,
+        detail: DetailLevel | int
     ) -> str | None:
         return ''
 
     @staticmethod
     def pedalgapstart_to_symbolic(
-        # expr: m21.expressions.PedalGapStart,
-        expr: m21.base.Music21Object,
+        expr: m21.expressions.PedalGapStart,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str:
         output: str = ''
         pm = M21Utils.get_enclosing_pedalmark(expr)
@@ -1935,28 +1864,25 @@ class M21Utils:
 
     @staticmethod
     def pedalgapstart_to_infodict(
-        # expr: m21.expressions.PedalGapStart,
-        expr: m21.base.Music21Object,
+        expr: m21.expressions.PedalGapStart,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         return {}
 
     @staticmethod
     def pedalgapend_to_string(
-        # expr: m21.expressions.PedalGapEnd,
-        expr: m21.base.Music21Object,
+        expr: m21.expressions.PedalGapEnd,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return ''
 
     @staticmethod
     def pedalgapend_to_symbolic(
-        # expr: m21.expressions.PedalGapEnd,
-        expr: m21.base.Music21Object,
+        expr: m21.expressions.PedalGapEnd,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str:
         output: str = ''
         pm = M21Utils.get_enclosing_pedalmark(expr)
@@ -1966,18 +1892,16 @@ class M21Utils:
 
     @staticmethod
     def pedalgapend_to_infodict(
-        # expr: m21.expressions.PedalGapEnd,
-        expr: m21.base.Music21Object,
+        expr: m21.expressions.PedalGapEnd,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         return {}
-    # pylint: enable=no-member
 
     @staticmethod
     def notestyle_to_dict(
         style: m21.style.NoteStyle,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict:
         if not DetailLevel.includesStyle(detail):
             return {}
@@ -1988,7 +1912,7 @@ class M21Utils:
         #     output['stemstyle'] = M21Utils.genericstyle_to_dict(style.stemStyle)
 
         if style.accidentalStyle is not None:
-            output['accidstyle'] = M21Utils.genericstyle_to_dict(style.accidentalStyle)
+            output['accidstyle'] = M21Utils.genericstyle_to_dict(style.accidentalStyle, detail)
 
         if style.noteSize:
             output['size'] = style.noteSize
@@ -1998,7 +1922,7 @@ class M21Utils:
     @staticmethod
     def textstyle_to_dict(
         style: m21.style.TextStyle,
-        detail: DetailLevel | int = DetailLevel.Default,
+        detail: DetailLevel | int,
         smuflTextSuppressed: bool = False,
         fontSizeSuppressed: bool = True
     ) -> dict:
@@ -2058,7 +1982,7 @@ class M21Utils:
     @staticmethod
     def genericstyle_to_dict(
         style: m21.style.Style,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict:
         if not DetailLevel.includesStyle(detail):
             return {}
@@ -2078,8 +2002,17 @@ class M21Utils:
             output['encl'] = style.enclosure
         if style.fontRepresentation is not None:
             output['fontrep'] = style.fontRepresentation
-        if style.color is not None:
-            output['color'] = style.color
+        if style.color:
+            # we normalize to MusicXML's color spec, which is '#rrggbb' or '#aarrggbb',
+            # so we don't think that 'red' is different from '#FF0000' (or whatever).
+            # We ignore colors that cannot be normalized (which will crash in webcolors)
+            # And then we _try_ to convert to standard name (e.g. 'limegreen') if possible.
+            try:
+                normalizedColor: str = M21Utils.normalizeColor(style.color)
+                if normalizedColor:
+                    output['color'] = normalizedColor
+            except Exception:
+                pass
         # if style.units != 'tenths':
             # output['units'] = style.units
         # if style.hideObjectOnPrint:
@@ -2087,9 +2020,30 @@ class M21Utils:
         return output
 
     @staticmethod
+    def normalizeColor(color: str) -> str:
+        # we normalize to MusicXML's color spec, which is '#rrggbb' or '#aarrggbb',
+        # so we don't think that 'red' is different from '#FF0000' (or whatever).
+        # We ignore colors that cannot be normalized (which will crash in webcolors)
+        # And then we _try_ to convert to standard name (e.g. 'limegreen') if possible,
+        # for readability.
+        output: str = ''
+        try:
+            output = m21.musicxml.m21ToXml.normalizeColor(color)
+        except Exception:
+            return ''
+
+        try:
+            output = webcolors.hex_to_name(output)
+        except Exception:
+            # output was hex, not translatable to standard name. Leave it as is.
+            pass
+
+        return output
+
+    @staticmethod
     def specificstyle_to_dict(
         style: m21.style.Style,
-        detail: DetailLevel | int = DetailLevel.Default,
+        detail: DetailLevel | int,
         smuflTextSuppressed: bool = False,
         fontSizeSuppressed: bool = True
     ) -> dict:
@@ -2117,7 +2071,7 @@ class M21Utils:
     @staticmethod
     def obj_to_styledict(
         obj: m21.base.Music21Object | m21.style.StyleMixin,
-        detail: DetailLevel | int = DetailLevel.Default,
+        detail: DetailLevel | int,
         smuflTextSuppressed: bool = False
     ) -> dict:
         if not DetailLevel.includesStyle(detail):
@@ -2170,7 +2124,7 @@ class M21Utils:
     def slur_to_string(
         slur: m21.spanner.Slur,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
@@ -2178,7 +2132,7 @@ class M21Utils:
     def slur_to_symbolic(
         slur: m21.spanner.Slur,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
@@ -2186,7 +2140,7 @@ class M21Utils:
     def slur_to_infodict(
         slur: m21.spanner.Slur,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         return {}
 
@@ -2194,7 +2148,7 @@ class M21Utils:
     def arpeggio_to_string(
         arp: m21.expressions.ArpeggioMark | m21.expressions.ArpeggioMarkSpanner,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
@@ -2202,7 +2156,7 @@ class M21Utils:
     def arpeggio_to_symbolic(
         arp: m21.expressions.ArpeggioMark | m21.expressions.ArpeggioMarkSpanner,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return f'{arp.type}'
 
@@ -2210,7 +2164,7 @@ class M21Utils:
     def arpeggio_to_infodict(
         arp: m21.expressions.ArpeggioMark | m21.expressions.ArpeggioMarkSpanner,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         output: dict[str, str] = {}
         if isinstance(arp, m21.expressions.ArpeggioMarkSpanner):
@@ -2222,7 +2176,7 @@ class M21Utils:
     def chordsym_to_string(
         cs: m21.harmony.ChordSymbol,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
@@ -2230,7 +2184,7 @@ class M21Utils:
     def chordsym_to_symbolic(
         cs: m21.harmony.ChordSymbol,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         if isinstance(cs, m21.harmony.NoChord):
             printedStr: str = cs.chordKindStr
@@ -2283,7 +2237,7 @@ class M21Utils:
     def chordsym_to_infodict(
         cs: m21.harmony.ChordSymbol,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         return {}
 
@@ -2291,7 +2245,7 @@ class M21Utils:
     def repeatbracket_to_string(
         rb: m21.spanner.RepeatBracket,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         if rb.overrideDisplay:
             return f'{rb.overrideDisplay}'
@@ -2302,7 +2256,7 @@ class M21Utils:
     def repeatbracket_to_symbolic(
         rb: m21.spanner.RepeatBracket,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
@@ -2310,7 +2264,7 @@ class M21Utils:
     def repeatbracket_to_infodict(
         rb: m21.spanner.RepeatBracket,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         output: dict[str, str] = {}
         output['measurecount'] = f'{len(rb)}'
@@ -2320,7 +2274,7 @@ class M21Utils:
     def staffinfo_to_string(
         sl: m21.layout.StaffLayout,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
@@ -2328,7 +2282,7 @@ class M21Utils:
     def staffinfo_to_symbolic(
         sl: m21.layout.StaffLayout,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
@@ -2336,7 +2290,7 @@ class M21Utils:
     def staffinfo_to_infodict(
         sl: m21.layout.StaffLayout,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         output: dict[str, str] = {}
         if sl.staffLines is not None:
@@ -2350,7 +2304,7 @@ class M21Utils:
     def systembreak_to_string(
         sb: m21.layout.SystemLayout,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
@@ -2358,7 +2312,7 @@ class M21Utils:
     def systembreak_to_symbolic(
         sb: m21.layout.SystemLayout,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return 'systembreak'
 
@@ -2366,7 +2320,7 @@ class M21Utils:
     def systembreak_to_infodict(
         sb: m21.layout.SystemLayout,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> dict[str, str]:
         return {}
 
@@ -2374,7 +2328,7 @@ class M21Utils:
     def pagebreak_to_string(
         sb: m21.layout.PageLayout,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         return None
 
@@ -2398,7 +2352,7 @@ class M21Utils:
     def extra_to_string(
         extra: m21.base.Music21Object,
         kind: str,
-        detail: DetailLevel | int = DetailLevel.Default
+        detail: DetailLevel | int
     ) -> str | None:
         if isinstance(extra, m21.spanner.Slur):
             return M21Utils.slur_to_string(extra, kind, detail)
@@ -2436,20 +2390,14 @@ class M21Utils:
         if isinstance(extra, m21.layout.PageLayout):
             return M21Utils.pagebreak_to_string(extra, kind, detail)
 
-        if not M21Utilities.m21PedalMarksSupported():
-            # print(f'Unexpected extra: {extra.classes[0]}', file=sys.stderr)
-            return ''
-
-        # pylint: disable=no-member
-        if isinstance(extra, m21.expressions.PedalMark):  # type: ignore
+        if isinstance(extra, m21.expressions.PedalMark):
             return M21Utils.pedalmark_to_string(extra, kind, detail)
-        if isinstance(extra, m21.expressions.PedalBounce):  # type: ignore
+        if isinstance(extra, m21.expressions.PedalBounce):
             return M21Utils.pedalbounce_to_string(extra, kind, detail)
-        if isinstance(extra, m21.expressions.PedalGapStart):  # type: ignore
+        if isinstance(extra, m21.expressions.PedalGapStart):
             return M21Utils.pedalgapstart_to_string(extra, kind, detail)
-        if isinstance(extra, m21.expressions.PedalGapEnd):  # type: ignore
+        if isinstance(extra, m21.expressions.PedalGapEnd):
             return M21Utils.pedalgapend_to_string(extra, kind, detail)
-        # pylint: enable=no-member
 
         # print(f'Unexpected extra: {extra.classes[0]}', file=sys.stderr)
         return ''

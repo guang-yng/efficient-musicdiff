@@ -48,8 +48,8 @@ def _printSupportedInputFormats() -> None:
                     + '\textensions: ' + ', '.join(subc.registerInputExtensions), file=sys.stderr)
 
 def diff(
-    score1: str | Path | m21.stream.Score,
-    score2: str | Path | m21.stream.Score,
+    score1: str | Path | m21.stream.Score | m21.stream.Opus,
+    score2: str | Path | m21.stream.Score | m21.stream.Opus,
     out_path1: str | Path | None = None,
     out_path2: str | Path | None = None,
     force_parse: bool = True,
@@ -187,55 +187,68 @@ def diff(
         return None
 
     if t.TYPE_CHECKING:
-        assert isinstance(score1, m21.stream.Score)
-        assert isinstance(score2, m21.stream.Score)
+        assert isinstance(score1, (m21.stream.Score, m21.stream.Opus))
+        assert isinstance(score2, (m21.stream.Score, m21.stream.Opus))
 
-    # scan each score, producing an annotated wrapper
-    annotated_score1: AnnScore = AnnScore(score1, detail)
-    annotated_score2: AnnScore = AnnScore(score2, detail)
+    total_cost: int = 0
 
-    diff_list: list
-    cost: int
-    diff_list, cost = Comparison.annotated_scores_diff(annotated_score1, annotated_score2)
+    # if both "scores" are actually Scores, the lists will be of length 1.
+    # If one or both are Opuses, the lists will be sized to fit the larger
+    # of the two, with the list for the shorter Opus (or maybe just a Score)
+    # padded with empty Scores, so the lists have the same length.
+    scoreList1: list[m21.stream.Score]
+    scoreList2: list[m21.stream.Score]
+    scoreList1, scoreList2 = _getScoreLists(score1, score2)
 
-    if cost != 0:
-        if visualize_diffs:
-            # you can change these three colors as you like...
-            # Visualization.INSERTED_COLOR = 'red'
-            # Visualization.DELETED_COLOR = 'red'
-            # Visualization.CHANGED_COLOR = 'red'
+    for sc1, sc2 in zip(scoreList1, scoreList2):
+        # scan each score, producing an annotated wrapper
+        annotated_score1: AnnScore = AnnScore(sc1, detail)
+        annotated_score2: AnnScore = AnnScore(sc2, detail)
 
-            # color changed/deleted/inserted notes, add descriptive text for each change, etc
-            Visualization.mark_diffs(score1, score2, diff_list)
+        diff_list: list
+        cost: int
+        diff_list, cost = Comparison.annotated_scores_diff(annotated_score1, annotated_score2)
 
-            # ask music21 to display the scores as PDFs.  Composer's name will be prepended with
-            # 'score1 ' and 'score2 ', respectively, so you can see which is which.
-            Visualization.show_diffs(score1, score2, out_path1, out_path2)
+        total_cost += cost
 
-    if print_omr_ned_output:
-        omr_ned_output: dict = Visualization.get_omr_ned_output(
-            cost, annotated_score1, annotated_score2
-        )
-        jsonStr: str = json.dumps(omr_ned_output, indent=4)
-        print(jsonStr)
+        if cost != 0:
+            if visualize_diffs:
+                # you can change these three colors as you like...
+                # Visualization.INSERTED_COLOR = 'red'
+                # Visualization.DELETED_COLOR = 'red'
+                # Visualization.CHANGED_COLOR = 'red'
 
-    if print_text_output:
-        text_output: str = Visualization.get_text_output(
-            score1, score2, diff_list, score1Name=score1Name, score2Name=score2Name
-        )
-        if text_output:
-            if print_omr_ned_output and print_text_output:
-                # put a blank line between them
-                print('')
-            print(text_output)
+                # color changed/deleted/inserted notes, add descriptive text for each change, etc
+                Visualization.mark_diffs(sc1, sc2, diff_list)
 
-    return cost
+                # ask music21 to display the scores as PDFs.  Composer's name will be prepended with
+                # 'score1 ' and 'score2 ', respectively, so you can see which is which.
+                Visualization.show_diffs(sc1, sc2, out_path1, out_path2)
+
+        if print_omr_ned_output:
+            omr_ned_output: dict = Visualization.get_omr_ned_output(
+                cost, annotated_score1, annotated_score2
+            )
+            jsonStr: str = json.dumps(omr_ned_output, indent=4)
+            print(jsonStr)
+
+        if print_text_output:
+            text_output: str = Visualization.get_text_output(
+                sc1, sc2, diff_list, score1Name=score1Name, score2Name=score2Name
+            )
+            if text_output:
+                if print_omr_ned_output and print_text_output:
+                    # put a blank line between them
+                    print('')
+                print(text_output)
+
+    return total_cost
 
 
 def _diff_omr_ned_metrics(
     predpath: str | Path,
     gtpath: str | Path,
-    detail: DetailLevel | int = DetailLevel.Default
+    detail: DetailLevel | int
 ) -> EvaluationMetrics | None:
     # Returns (numsyms_gt, numsyms_pred, omr_edit_distance, edit_distances_dict, omr_ned).
     # Returns None if pred or gt is not a music21-importable format.
@@ -261,6 +274,9 @@ def _diff_omr_ned_metrics(
             forceSource=True,
             acceptSyntaxErrors=True
         )
+        if isinstance(predscore, m21.stream.Opus):
+            # for ML training we only compare the first score found in the file
+            predscore = predscore.scores[0]
     except Exception:
         predscore = m21.stream.Score()
 
@@ -277,6 +293,9 @@ def _diff_omr_ned_metrics(
             forceSource=True,
             acceptSyntaxErrors=False
         )
+        if isinstance(gtscore, m21.stream.Opus):
+            # for ML training we only compare the first score found in the file
+            gtscore = gtscore.scores[0]
     except Exception:
         gtscore = m21.stream.Score()
 
@@ -416,3 +435,35 @@ def diff_ml_training(
         outf.flush()
 
     return overall_score, output_file_path
+
+def _getScoreLists(
+    score1: m21.stream.Score | m21.stream.Opus,
+    score2: m21.stream.Score | m21.stream.Opus
+) -> tuple[list[m21.stream.Score], list[m21.stream.Score]]:
+    list1: list[m21.stream.Score] = []
+    list2: list[m21.stream.Score] = []
+    if isinstance(score1, m21.stream.Score):
+        list1 = [score1]
+    else:
+        list1 = list(score1.scores)
+    if isinstance(score2, m21.stream.Score):
+        list2 = [score2]
+    else:
+        list2 = list(score2.scores)
+
+    if len(list1) == len(list2):
+        return list1, list2
+
+    shortList: list[m21.stream.Score]
+    longList: list[m21.stream.Score]
+    if len(list1) > len(list2):
+        shortList = list2
+        longList = list1
+    else:
+        shortList = list1
+        longList = list2
+    numPad: int = len(longList) - len(shortList)
+    for _ in range(0, numPad):
+        shortList.append(m21.stream.Score())
+
+    return list1, list2

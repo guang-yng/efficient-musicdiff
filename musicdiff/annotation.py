@@ -17,6 +17,7 @@ __docformat__ = "google"
 import html
 from fractions import Fraction
 import typing as t
+import copy
 
 import music21 as m21
 from music21.common import OffsetQL, opFrac
@@ -1029,7 +1030,7 @@ class AnnVoice:
             self.tuplet_list = M21Utils.get_tuplets_type(
                 note_list
             )  # corrected tuplets (with "start" and "continue")
-            self.tuplet_info = M21Utils.get_tuplets_info(note_list)
+            self.tuplet_info = M21Utils.get_tuplets_info(note_list, detail)
             # create a list of notes with beaming and tuplets information attached
             self.annot_notes = []
             for i, n in enumerate(note_list):
@@ -1199,7 +1200,7 @@ class AnnMeasure:
                 tuplet_list = M21Utils.get_tuplets_type(
                     note_list
                 )  # corrected tuplets (with "start" and "continue")
-                tuplet_info = M21Utils.get_tuplets_info(note_list)
+                tuplet_info = M21Utils.get_tuplets_info(note_list, detail)
 
                 # create a list of notes with beaming and tuplets information attached
                 self.annot_notes = []
@@ -1461,11 +1462,13 @@ class AnnStaffGroup:
         self.name: str = staff_group.name or ''
         self.abbreviation: str = staff_group.abbreviation or ''
         self.symbol: str | None = None
-        self.barTogether: bool | str | None = staff_group.barTogether
+        self.barTogether: bool | str | None = None
 
         if DetailLevel.includesStyle(detail):
             # symbol (brace, bracket, line, etc) is considered to be style
             self.symbol = staff_group.symbol
+            # so is the style of barline
+            self.barTogether = staff_group.barTogether
 
         self.part_indices: list[int] = []
         for part in staff_group:
@@ -1592,16 +1595,13 @@ class AnnMetadataItem:
         self.metadata_item = id(self)
         self.key = key
         if isinstance(value, m21.metadata.Text):
-            # Create a string representing both the text and the language, but not isTranslated,
-            # since isTranslated cannot be represented in many file formats.
-            self.value = (
-                self.make_value_string(value)
-                + f'(language={value.language})'
-            )
+            # Create a string representing the text, but not the language or isTranslated,
+            # since language/isTranslated cannot be represented in many file formats.
+            self.value = self.make_value_string(value)
             if isinstance(value, m21.metadata.Copyright):
                 self.value += f' role={value.role}'
         elif isinstance(value, m21.metadata.Contributor):
-            # Create a string (same thing: value.name.isTranslated will differ randomly)
+            # Create a string (same thing: language and isTranslated will differ randomly)
             # Currently I am also ignoring more than one name, and birth/death.
             if not value._names:
                 # ignore this metadata item
@@ -1621,10 +1621,6 @@ class AnnMetadataItem:
                 else:
                     self.value += f'(role={value.role}'
                 roleEmitted = True
-            if value._names:
-                if roleEmitted:
-                    self.value += ', '
-                self.value += f'language={value._names[0].language}'
             if roleEmitted:
                 self.value += ')'
         else:
@@ -1667,8 +1663,7 @@ class AnnMetadataItem:
             int: The notation size of the annotated metadata item
         """
         if self._cached_notation_size is None:
-            size: int = len(self.key)
-            size += len(self.value)
+            size: int = len(self.value)
             self._cached_notation_size = size
         return self._cached_notation_size
 
@@ -1745,11 +1740,23 @@ class AnnScore:
             )
 
         if DetailLevel.includesMetadata(detail) and score.metadata:
+            # Before getting everything, undo the weird thing that m21's MusicXML
+            # reader does: if title and movementName are identical, it deletes title.
+            # This is to undo a thing that music21's MusicXML writer does, which is:
+            # if there is no movementName, duplicate title into movementName.  So,
+            # to properly undo this here, we need to do: if no title, copy movementName
+            # to title, and remove movementName.  But I don't want to modify the actual
+            # metadata, so I will make a copy first.
+            md: m21.metadata.Metadata = copy.deepcopy(score.metadata)
+            if not md['title'] and len(md['movementName']) == 1:
+                md['title'] = copy.deepcopy(md['movementName'])
+                md['movementName'] = None
+
             # m21 metadata.all() can't sort primitives, so we'll have to sort by hand.
             # Note: we sort metadata_items_list after the fact, because sometimes
             # (e.g. otherContributor:poet) we substitute names (e.g. lyricist:)
             allItems: list[tuple[str, t.Any]] = list(
-                score.metadata.all(returnPrimitives=True, returnSorted=False)
+                md.all(returnPrimitives=True, returnSorted=False)
             )
             for key, value in allItems:
                 if key in ('fileFormat', 'filePath', 'software'):
@@ -1772,6 +1779,13 @@ class AnnScore:
                     # extended ASCII encoding of the Humdrum file, 'humdrum:PUB'
                     # is the publication status of the file (published or not?).
                     continue
+                if key == 'composer' and str(value) == 'Music21':
+                    # ignore music21's MusicXML reader's fill-in composer name.
+                    continue
+                if key in ('title', 'movementName') and str(value) == 'Music21 Fragment':
+                    # ignore music21's MusicXML reader's fill-in title/movementName.
+                    continue
+
                 ami: AnnMetadataItem = AnnMetadataItem(key, value)
                 if ami.key and ami.value:
                     self.metadata_items_list.append(ami)
